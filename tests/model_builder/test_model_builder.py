@@ -22,8 +22,11 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import pytest
+import xarray as xr
 
 from pymc_marketing.model_builder import ModelBuilder
+
+rng = np.random.default_rng(42)
 
 
 @pytest.fixture(scope="module")
@@ -54,7 +57,7 @@ def fitted_model_instance(toy_X, toy_y):
         "b": {"loc": 0, "scale": 10},
         "obs_error": 2,
     }
-    model = test_ModelBuilder(
+    model = ModelBuilderTest(
         model_config=model_config,
         sampler_config=sampler_config,
         test_parameter="test_paramter",
@@ -76,7 +79,7 @@ def not_fitted_model_instance(toy_X, toy_y):
         "b": {"loc": 0, "scale": 10},
         "obs_error": 2,
     }
-    model = test_ModelBuilder(
+    model = ModelBuilderTest(
         model_config=model_config,
         sampler_config=sampler_config,
         test_parameter="test_paramter",
@@ -84,7 +87,7 @@ def not_fitted_model_instance(toy_X, toy_y):
     return model
 
 
-class test_ModelBuilder(ModelBuilder):
+class ModelBuilderTest(ModelBuilder):
     def __init__(self, model_config=None, sampler_config=None, test_parameter=None):
         self.test_parameter = test_parameter
         super().__init__(model_config=model_config, sampler_config=sampler_config)
@@ -123,11 +126,12 @@ class test_ModelBuilder(ModelBuilder):
     def output_var(self):
         return "output"
 
-    def _data_setter(self, x: pd.Series, y: pd.Series = None):
+    def _data_setter(self, X: pd.Series, y: pd.Series = None):
         with self.model:
-            pm.set_data({"x": x.values})
+            pm.set_data({"x": X.values})
             if y is not None:
-                pm.set_data({"y_data": y.values})
+                y = y.values if isinstance(y, pd.Series) else y
+                pm.set_data({"y_data": y})
 
     @property
     def _serializable_model_config(self):
@@ -155,6 +159,20 @@ class test_ModelBuilder(ModelBuilder):
         }
 
 
+def test_model_and_sampler_config():
+    default = ModelBuilderTest()
+    assert default.model_config == default.default_model_config
+    assert default.sampler_config == default.default_sampler_config
+
+    nondefault = ModelBuilderTest(
+        model_config={"obs_error": 3}, sampler_config={"draws": 42}
+    )
+    assert nondefault.model_config != nondefault.default_model_config
+    assert nondefault.sampler_config != nondefault.default_sampler_config
+    assert nondefault.model_config == default.model_config | {"obs_error": 3}
+    assert nondefault.sampler_config == default.sampler_config | {"draws": 42}
+
+
 def test_save_input_params(fitted_model_instance):
     assert fitted_model_instance.idata.attrs["test_paramter"] == '"test_paramter"'
 
@@ -162,7 +180,7 @@ def test_save_input_params(fitted_model_instance):
 def test_save_load(fitted_model_instance):
     temp = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False)
     fitted_model_instance.save(temp.name)
-    test_builder2 = test_ModelBuilder.load(temp.name)
+    test_builder2 = ModelBuilderTest.load(temp.name)
     assert fitted_model_instance.idata.groups() == test_builder2.idata.groups()
     assert fitted_model_instance.id == test_builder2.id
     x_pred = np.random.uniform(low=0, high=1, size=100)
@@ -180,14 +198,14 @@ def test_initial_build_and_fit(fitted_model_instance, check_idata=True) -> Model
 
 
 def test_save_without_fit_raises_runtime_error():
-    model_builder = test_ModelBuilder()
+    model_builder = ModelBuilderTest()
     with pytest.raises(RuntimeError):
         model_builder.save("saved_model")
 
 
 def test_empty_sampler_config_fit(toy_X, toy_y):
     sampler_config = {}
-    model_builder = test_ModelBuilder(sampler_config=sampler_config)
+    model_builder = ModelBuilderTest(sampler_config=sampler_config)
     model_builder.idata = model_builder.fit(
         X=toy_X, y=toy_y, chains=1, draws=100, tune=100
     )
@@ -211,7 +229,7 @@ def test_fit(fitted_model_instance):
 
 
 def test_fit_no_y(toy_X):
-    model_builder = test_ModelBuilder()
+    model_builder = ModelBuilderTest()
     model_builder.idata = model_builder.fit(X=toy_X, chains=1, draws=100, tune=100)
     assert model_builder.model is not None
     assert model_builder.idata is not None
@@ -256,14 +274,14 @@ def test_model_config_formatting():
             ],
         },
     }
-    model_builder = test_ModelBuilder()
+    model_builder = ModelBuilderTest()
     converted_model_config = model_builder._model_config_formatting(model_config)
     np.testing.assert_equal(converted_model_config["a"]["dims"], ("x",))
     np.testing.assert_equal(converted_model_config["a"]["loc"], np.array([0, 0]))
 
 
 def test_id():
-    model_builder = test_ModelBuilder()
+    model_builder = ModelBuilderTest()
     expected_id = hashlib.sha256(
         str(model_builder.model_config.values()).encode()
         + model_builder.version.encode()
@@ -271,3 +289,28 @@ def test_id():
     ).hexdigest()[:16]
 
     assert model_builder.id == expected_id
+
+
+@pytest.mark.parametrize("name", ["prior_predictive", "posterior_predictive"])
+def test_sample_xxx_predictive_keeps_second(
+    fitted_model_instance, toy_X, name: str
+) -> None:
+    method_name = f"sample_{name}"
+    method = getattr(fitted_model_instance, method_name)
+
+    X_pred = toy_X["input"]
+
+    kwargs = {
+        "X_pred": X_pred,
+        "combined": False,
+        "extend_idata": True,
+        "random_seed": rng,
+    }
+    first_sample = method(**kwargs)
+    second_sample = method(**kwargs)
+
+    with pytest.raises(AssertionError):
+        xr.testing.assert_allclose(first_sample, second_sample)
+
+    sample = getattr(fitted_model_instance.idata, name)
+    xr.testing.assert_allclose(sample, second_sample)

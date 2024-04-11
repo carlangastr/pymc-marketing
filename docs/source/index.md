@@ -65,9 +65,12 @@ To the reference guide
 Install and activate an environment (e.g. `marketing_env`) with the `pymc-marketing` package from [conda-forge](https://conda-forge.org). It may look something like the following:
 
 ```bash
-mamba create -c conda-forge -n marketing_env pymc-marketing
-mamba activate marketing_env
+conda create -c conda-forge -n marketing_env pymc-marketing
+conda activate marketing_env
 ```
+
+### Installation for developers
+If you are a developer of pymc-marketing, or want to start contributing, [refer to the contributing guide](https://github.com/pymc-labs/pymc-marketing/blob/main/CONTRIBUTING.md) to get started.
 
 See the official [PyMC installation guide](https://www.pymc.io/projects/docs/en/latest/installation.html) if more detail is needed.
 
@@ -80,7 +83,7 @@ Create a new Jupyter notebook with either JupyterLab or VS Code.
 After installing the `pymc-marketing` package (see above), run the following with `marketing_env` activated:
 
 ```bash
-mamba install -c conda-forge jupyterlab
+conda install -c conda-forge jupyterlab
 jupyter lab
 ```
 
@@ -89,7 +92,7 @@ jupyter lab
 After installing the `pymc-marketing` package (see above), run the following with `marketing_env` activated:
 
 ```bash
-mamba install -c conda-forge ipykernel
+conda install -c conda-forge ipykernel
 ```
 
 Start VS Code and ensure that the "Jupyter" extension is installed. Press Ctrl + Shift + P and type "Python: Select Interpreter". Ensure that `marketing_env` is selected. Press Ctrl + Shift + P and type "Create: New Jupyter Notebook".
@@ -101,7 +104,7 @@ import pandas as pd
 from pymc_marketing.mmm import DelayedSaturatedMMM
 
 
-data_url = "https://raw.githubusercontent.com/pymc-labs/pymc-marketing/main/datasets/mmm_example.csv"
+data_url = "https://raw.githubusercontent.com/pymc-labs/pymc-marketing/main/data/mmm_example.csv"
 data = pd.read_csv(data_url, parse_dates=['date_week'])
 
 mmm = DelayedSaturatedMMM(
@@ -122,8 +125,8 @@ Initiate fitting and get a visualization of some of the outputs with:
 ```python
 X = data.drop('y',axis=1)
 y = data['y']
-model.fit(X,y)
-model.plot_components_contributions();
+mmm.fit(X,y)
+mmm.plot_components_contributions();
 ```
 
 See the Example notebooks section for examples of further types of plot you can get, as well as introspect the results of the fitting.
@@ -137,7 +140,7 @@ import seaborn as sns
 from pymc_marketing import clv
 
 
-data_url = "https://raw.githubusercontent.com/pymc-labs/pymc-marketing/main/datasets/clv_quickstart.csv"
+data_url = "https://raw.githubusercontent.com/pymc-labs/pymc-marketing/main/data/clv_quickstart.csv"
 data = pd.read_csv(data_url)
 data['customer_id'] = data.index
 

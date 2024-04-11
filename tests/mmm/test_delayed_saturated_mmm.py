@@ -1,11 +1,12 @@
 import os
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import arviz as az
 import numpy as np
 import pandas as pd
 import pymc as pm
 import pytest
+import xarray as xr
 from matplotlib import pyplot as plt
 
 from pymc_marketing.mmm.delayed_saturated_mmm import (
@@ -17,60 +18,75 @@ seed: int = sum(map(ord, "pymc_marketing"))
 rng: np.random.Generator = np.random.default_rng(seed=seed)
 
 
-@pytest.fixture(scope="class")
-def toy_X() -> pd.DataFrame:
+@pytest.fixture(scope="module")
+def generate_data():
+    def _generate_data(date_data: pd.DatetimeIndex) -> pd.DataFrame:
+        n: int = date_data.size
+
+        return pd.DataFrame(
+            data={
+                "date": date_data,
+                "channel_1": rng.integers(low=0, high=400, size=n),
+                "channel_2": rng.integers(low=0, high=50, size=n),
+                "control_1": rng.gamma(shape=1000, scale=500, size=n),
+                "control_2": rng.gamma(shape=100, scale=5, size=n),
+                "other_column_1": rng.integers(low=0, high=100, size=n),
+                "other_column_2": rng.normal(loc=0, scale=1, size=n),
+            }
+        )
+
+    return _generate_data
+
+
+@pytest.fixture(scope="module")
+def toy_X(generate_data) -> pd.DataFrame:
     date_data: pd.DatetimeIndex = pd.date_range(
         start="2019-06-01", end="2021-12-31", freq="W-MON"
     )
 
-    n: int = date_data.size
-
-    return pd.DataFrame(
-        data={
-            "date": date_data,
-            "channel_1": rng.integers(low=0, high=400, size=n),
-            "channel_2": rng.integers(low=0, high=50, size=n),
-            "control_1": rng.gamma(shape=1000, scale=500, size=n),
-            "control_2": rng.gamma(shape=100, scale=5, size=n),
-            "other_column_1": rng.integers(low=0, high=100, size=n),
-            "other_column_2": rng.normal(loc=0, scale=1, size=n),
-        }
-    )
+    return generate_data(date_data)
 
 
 @pytest.fixture(scope="class")
-def model_config_requiring_serialization() -> dict:
+def model_config_requiring_serialization() -> Dict:
     model_config = {
-        "intercept": {"mu": 0, "sigma": 2},
+        "intercept": {"dist": "Normal", "kwargs": {"mu": 0, "sigma": 2}},
         "beta_channel": {
-            "sigma": np.array([0.4533017, 0.25488063]),
-            "dims": ("channel",),
+            "dist": "HalfNormal",
+            "kwargs": {"sigma": np.array([0.4533017, 0.25488063])},
         },
         "alpha": {
-            "alpha": np.array([3, 3]),
-            "beta": np.array([3.55001301, 2.87092431]),
-            "dims": ("channel",),
+            "dist": "Beta",
+            "kwargs": {
+                "alpha": np.array([3, 3]),
+                "beta": np.array([3.55001301, 2.87092431]),
+            },
         },
         "lam": {
-            "alpha": np.array([3, 3]),
-            "beta": np.array([4.12231653, 5.02896872]),
-            "dims": ("channel",),
+            "dist": "Gamma",
+            "kwargs": {
+                "alpha": np.array([3, 3]),
+                "beta": np.array([4.12231653, 5.02896872]),
+            },
         },
-        "sigma": {"sigma": 2},
-        "gamma_control": {"mu": 0, "sigma": 2, "dims": ("control",)},
-        "mu": {"dims": ("date",)},
-        "likelihood": {"dims": ("date",)},
-        "gamma_fourier": {"mu": 0, "b": 1, "dims": "fourier_mode"},
+        "likelihood": {
+            "dist": "Normal",
+            "kwargs": {
+                "sigma": {"dist": "HalfNormal", "kwargs": {"sigma": 2}},
+            },
+        },
+        "gamma_control": {"dist": "HalfNormal", "kwargs": {"mu": 0, "sigma": 2}},
+        "gamma_fourier": {"dist": "HalfNormal", "kwargs": {"mu": 0, "b": 1}},
     }
     return model_config
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
 def toy_y(toy_X: pd.DataFrame) -> pd.Series:
     return pd.Series(data=rng.integers(low=0, high=100, size=toy_X.shape[0]))
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
 def mmm() -> DelayedSaturatedMMM:
     return DelayedSaturatedMMM(
         date_column="date",
@@ -80,12 +96,35 @@ def mmm() -> DelayedSaturatedMMM:
     )
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
+def mmm_with_fourier_features() -> DelayedSaturatedMMM:
+    return DelayedSaturatedMMM(
+        date_column="date",
+        channel_columns=["channel_1", "channel_2"],
+        adstock_max_lag=4,
+        control_columns=["control_1", "control_2"],
+        yearly_seasonality=2,
+    )
+
+
+@pytest.fixture(scope="module")
 def mmm_fitted(
     mmm: DelayedSaturatedMMM, toy_X: pd.DataFrame, toy_y: pd.Series
 ) -> DelayedSaturatedMMM:
-    mmm.fit(X=toy_X, y=toy_y, target_accept=0.8, draws=3, chains=2)
+    mmm.fit(X=toy_X, y=toy_y, target_accept=0.8, draws=3, chains=2, random_seed=rng)
     return mmm
+
+
+@pytest.fixture(scope="module")
+def mmm_fitted_with_fourier_features(
+    mmm_with_fourier_features: DelayedSaturatedMMM,
+    toy_X: pd.DataFrame,
+    toy_y: pd.Series,
+) -> DelayedSaturatedMMM:
+    mmm_with_fourier_features.fit(
+        X=toy_X, y=toy_y, target_accept=0.8, draws=3, chains=2, random_seed=rng
+    )
+    return mmm_with_fourier_features
 
 
 class TestDelayedSaturatedMMM:
@@ -448,7 +487,7 @@ class TestDelayedSaturatedMMM:
         with pytest.raises(TypeError):
             base_delayed_saturated_mmm._data_setter(toy_X, y_incorrect)
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(KeyError):
             X_wrong_df = pd.DataFrame(
                 {"column1": np.random.rand(135), "column2": np.random.rand(135)}
             )
@@ -459,12 +498,10 @@ class TestDelayedSaturatedMMM:
         except Exception as e:
             pytest.fail(f"_data_setter failed with error {e}")
 
-        try:
+        with pytest.raises(TypeError, match="X must be a pandas DataFrame"):
             base_delayed_saturated_mmm._data_setter(
                 X_correct_ndarray, y_correct_ndarray
             )
-        except Exception as e:
-            pytest.fail(f"_data_setter failed with error {e}")
 
     def test_save_load(self, mmm_fitted):
         model = mmm_fitted
@@ -506,3 +543,358 @@ class TestDelayedSaturatedMMM:
         ):
             DelayedSaturatedMMM.load("test_model")
         os.remove("test_model")
+
+    @pytest.mark.parametrize(
+        argnames="model_config",
+        argvalues=[
+            None,
+            {
+                "intercept": {"dist": "Normal", "kwargs": {"mu": 0, "sigma": 2}},
+                "beta_channel": {
+                    "dist": "HalfNormal",
+                    "kwargs": {"sigma": np.array([0.4533017, 0.25488063])},
+                },
+                "alpha": {
+                    "dist": "Beta",
+                    "kwargs": {
+                        "alpha": np.array([3, 3]),
+                        "beta": np.array([3.55001301, 2.87092431]),
+                    },
+                },
+                "lam": {
+                    "dist": "Gamma",
+                    "kwargs": {
+                        "alpha": np.array([3, 3]),
+                        "beta": np.array([4.12231653, 5.02896872]),
+                    },
+                },
+                "likelihood": {
+                    "dist": "StudentT",
+                    "kwargs": {"nu": 3, "sigma": 2},
+                },
+                "gamma_control": {"dist": "Normal", "kwargs": {"mu": 0, "sigma": 2}},
+                "gamma_fourier": {"dist": "Laplace", "kwargs": {"mu": 0, "b": 1}},
+            },
+        ],
+        ids=["default_config", "custom_config"],
+    )
+    def test_model_config(
+        self, model_config: Dict, toy_X: pd.DataFrame, toy_y: pd.Series
+    ):
+        # Create model instance with specified config
+        model = DelayedSaturatedMMM(
+            date_column="date",
+            channel_columns=["channel_1", "channel_2"],
+            adstock_max_lag=2,
+            yearly_seasonality=2,
+            model_config=model_config,
+        )
+
+        model.build_model(X=toy_X, y=toy_y.to_numpy())
+        # Check for default configuration
+        if model_config is None:
+            # assert observed RV type, and priors of some/all free_RVs.
+            assert isinstance(
+                model.model.observed_RVs[0].owner.op, pm.Normal
+            )  # likelihood
+            # Add more asserts as needed for default configuration
+
+        # Check for custom configuration
+        else:
+            # assert custom configuration is applied correctly
+            assert isinstance(
+                model.model.observed_RVs[0].owner.op, pm.StudentT
+            )  # likelihood
+            assert isinstance(
+                model.model["beta_channel"].owner.op, pm.HalfNormal
+            )  # beta_channel
+
+
+def new_date_ranges_to_test():
+    yield from [
+        # 2021-12-31 is the last date in the toy data
+        # Old and New dates
+        pd.date_range("2021-11-01", "2022-03-01", freq="W-MON"),
+        # Only old dates
+        pd.date_range("2019-06-01", "2021-12-31", freq="W-MON"),
+        # Only new dates
+        pd.date_range("2022-01-01", "2022-03-01", freq="W-MON"),
+        # Less than the adstock_max_lag (4) of the model
+        pd.date_range("2022-01-01", freq="W-MON", periods=1),
+    ]
+
+
+@pytest.mark.parametrize(
+    "model_name", ["mmm_fitted", "mmm_fitted_with_fourier_features"]
+)
+@pytest.mark.parametrize(
+    "new_dates",
+    new_date_ranges_to_test(),
+)
+@pytest.mark.parametrize("combined", [True, False])
+@pytest.mark.parametrize("original_scale", [True, False])
+def test_new_data_sample_posterior_predictive_method(
+    generate_data,
+    toy_X,
+    model_name: str,
+    new_dates: pd.DatetimeIndex,
+    combined: bool,
+    original_scale: bool,
+    request,
+) -> None:
+    """This is the method that is used in all the other methods that generate predictions."""
+    mmm = request.getfixturevalue(model_name)
+    X_pred = generate_data(new_dates)
+
+    posterior_predictive = mmm.sample_posterior_predictive(
+        X_pred=X_pred,
+        extend_idata=False,
+        combined=combined,
+        original_scale=original_scale,
+    )
+    pd.testing.assert_index_equal(
+        pd.DatetimeIndex(posterior_predictive.coords["date"]),
+        new_dates,
+    )
+
+
+@pytest.mark.parametrize(
+    "model_name", ["mmm_fitted", "mmm_fitted_with_fourier_features"]
+)
+@pytest.mark.parametrize(
+    "new_dates",
+    [pd.date_range("2022-01-01", "2022-03-01", freq="W-MON")],
+)
+def test_new_data_include_last_observation_same_dims(
+    generate_data,
+    model_name: str,
+    new_dates: pd.DatetimeIndex,
+    request,
+) -> None:
+    mmm = request.getfixturevalue(model_name)
+    X_pred = generate_data(new_dates)
+
+    pp_without = mmm.predict_posterior(
+        X_pred,
+        include_last_observations=False,
+    )
+    pp_with = mmm.predict_posterior(
+        X_pred,
+        include_last_observations=True,
+    )
+    assert pp_without.coords.equals(pp_with.coords)
+    pd.testing.assert_index_equal(
+        pd.DatetimeIndex(pp_without.coords["date"]),
+        new_dates,
+    )
+
+
+@pytest.mark.parametrize(
+    "model_name", ["mmm_fitted", "mmm_fitted_with_fourier_features"]
+)
+@pytest.mark.parametrize(
+    "new_dates",
+    [pd.date_range("2022-01-01", "2022-03-01", freq="W-MON")],
+)
+def test_new_data_predict_method(
+    generate_data,
+    toy_y,
+    model_name: str,
+    new_dates: pd.DatetimeIndex,
+    request,
+) -> None:
+    mmm = request.getfixturevalue(model_name)
+    X_pred = generate_data(new_dates)
+
+    posterior_predictive_mean = mmm.predict(X_pred=X_pred)
+
+    assert isinstance(posterior_predictive_mean, np.ndarray)
+    assert posterior_predictive_mean.shape[0] == new_dates.size
+    # Original scale constraint
+    assert np.all(posterior_predictive_mean >= 0)
+
+    # Domain kept close
+    lower, upper = np.quantile(a=posterior_predictive_mean, q=[0.025, 0.975], axis=0)
+    assert lower < toy_y.mean() < upper
+
+
+def test_get_valid_distribution(mmm):
+    normal_dist = mmm._get_distribution({"dist": "Normal"})
+    assert normal_dist is pm.Normal
+
+
+def test_get_invalid_distribution(mmm):
+    with pytest.raises(ValueError, match="does not exist in PyMC"):
+        mmm._get_distribution({"dist": "NonExistentDist"})
+
+
+def test_invalid_likelihood_type(mmm):
+    with pytest.raises(
+        ValueError,
+        match="The distribution used for the likelihood is not allowed",
+    ):
+        mmm._create_likelihood_distribution(
+            dist={"dist": "Cauchy", "kwargs": {"alpha": 2, "beta": 4}},
+            mu=np.array([0]),
+            observed=np.random.randn(100),
+            dims="obs_dim",
+        )
+
+
+def test_create_likelihood_invalid_kwargs_structure(mmm):
+    with pytest.raises(
+        ValueError, match="either a dictionary with a 'dist' key or a numeric value"
+    ):
+        mmm._create_likelihood_distribution(
+            dist={"dist": "Normal", "kwargs": {"sigma": "not a dictionary or numeric"}},
+            mu=np.array([0]),
+            observed=np.random.randn(100),
+            dims="obs_dim",
+        )
+
+
+def test_create_likelihood_mu_in_top_level_kwargs(mmm):
+    with pytest.raises(
+        ValueError, match="'mu' key is not allowed directly within 'kwargs'"
+    ):
+        mmm._create_likelihood_distribution(
+            dist={"dist": "Normal", "kwargs": {"mu": 0, "sigma": 2}},
+            mu=np.array([0]),
+            observed=np.random.randn(100),
+            dims="obs_dim",
+        )
+
+
+def new_contributions_property_checks(new_contributions, X, model):
+    assert isinstance(new_contributions, xr.DataArray)
+
+    coords = new_contributions.coords
+    assert coords["channel"].values.tolist() == model.channel_columns
+    np.testing.assert_allclose(
+        coords["time_since_spend"].values,
+        np.arange(-model.adstock_max_lag, model.adstock_max_lag + 1),
+    )
+
+    # Channel contributions are non-negative
+    assert (new_contributions >= 0).all()
+
+
+def test_new_spend_contributions(mmm_fitted) -> None:
+    new_spend = np.ones(len(mmm_fitted.channel_columns))
+    new_contributions = mmm_fitted.new_spend_contributions(new_spend)
+
+    new_contributions_property_checks(new_contributions, mmm_fitted.X, mmm_fitted)
+
+
+def test_new_spend_contributions_prior_error(mmm) -> None:
+    new_spend = np.ones(len(mmm.channel_columns))
+    match = "sample_prior_predictive"
+    with pytest.raises(RuntimeError, match=match):
+        mmm.new_spend_contributions(new_spend, prior=True)
+
+
+@pytest.mark.parametrize("original_scale", [True, False])
+def test_new_spend_contributions_prior(original_scale, mmm, toy_X) -> None:
+    mmm.sample_prior_predictive(
+        X_pred=toy_X,
+        extend_idata=True,
+    )
+
+    new_spend = np.ones(len(mmm.channel_columns))
+    new_contributions = mmm.new_spend_contributions(
+        new_spend, prior=True, original_scale=original_scale, random_seed=0
+    )
+
+    new_contributions_property_checks(new_contributions, toy_X, mmm)
+
+
+def test_plot_new_spend_contributions_original_scale(mmm_fitted) -> None:
+    ax = mmm_fitted.plot_new_spend_contributions(
+        spend_amount=1, original_scale=True, random_seed=0
+    )
+
+    assert isinstance(ax, plt.Axes)
+
+
+@pytest.fixture(scope="module")
+def mmm_with_prior(mmm) -> DelayedSaturatedMMM:
+    n_chains = 1
+    n_samples = 100
+
+    channels = mmm.channel_columns
+    n_channels = len(channels)
+
+    idata = az.from_dict(
+        prior={
+            # Arbitrary but close to the default parameterization
+            "alpha": rng.uniform(size=(n_chains, n_samples, n_channels)),
+            "lam": rng.exponential(size=(n_chains, n_samples, n_channels)),
+            "beta_channel": np.abs(rng.normal(size=(n_chains, n_samples, n_channels))),
+        },
+        coords={"channel": channels},
+        dims={
+            "alpha": ["chain", "draw", "channel"],
+            "lam": ["chain", "draw", "channel"],
+            "beta_channel": ["chain", "draw", "channel"],
+        },
+    )
+    mmm.idata = idata
+
+    return mmm
+
+
+def test_plot_new_spend_contributions_prior(mmm_with_prior) -> None:
+    ax = mmm_with_prior.plot_new_spend_contributions(
+        spend_amount=1, prior=True, random_seed=0
+    )
+    assert isinstance(ax, plt.Axes)
+
+
+def test_plot_new_spend_contributions_prior_select_channels(
+    mmm_with_prior,
+) -> None:
+    ax = mmm_with_prior.plot_new_spend_contributions(
+        spend_amount=1, prior=True, channels=["channel_2"], random_seed=0
+    )
+
+    assert isinstance(ax, plt.Axes)
+
+
+@pytest.fixture
+def df_lift_test() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "channel": ["channel_1", "channel_1"],
+            "x": [1, 2],
+            "delta_x": [1, 1],
+            "delta_y": [1, 1],
+            "sigma": [1, 1],
+        }
+    )
+
+
+def test_add_lift_test_measurements(mmm, toy_X, toy_y, df_lift_test) -> None:
+    mmm.build_model(X=toy_X, y=toy_y)
+
+    name = "lift_measurements"
+    assert name not in mmm.model
+
+    mmm.add_lift_test_measurements(
+        df_lift_test,
+        name=name,
+    )
+
+    assert name in mmm.model
+
+
+def test_add_lift_test_measurements_no_model() -> None:
+    mmm = DelayedSaturatedMMM(
+        date_column="date",
+        channel_columns=["channel_1", "channel_2"],
+        adstock_max_lag=4,
+        control_columns=["control_1", "control_2"],
+    )
+    with pytest.raises(RuntimeError, match="The model has not been built yet."):
+        mmm.add_lift_test_measurements(
+            pd.DataFrame(),
+        )

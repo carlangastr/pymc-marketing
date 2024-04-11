@@ -4,13 +4,14 @@ import pytest
 import xarray as xr
 
 from pymc_marketing.mmm.utils import (
+    apply_sklearn_transformer_across_dim,
     compute_sigmoid_second_derivative,
+    create_new_spend_data,
     estimate_menten_parameters,
     estimate_sigmoid_parameters,
-    extense_sigmoid,
     find_sigmoid_inflection_point,
     generate_fourier_modes,
-    michaelis_menten,
+    sigmoid_saturation,
 )
 
 
@@ -88,41 +89,6 @@ def test_bad_order(n_order):
         )
 
 
-@pytest.mark.parametrize(
-    "x, alpha, lam, expected",
-    [
-        (10, 100, 5, 66.67),
-        (20, 100, 5, 80),
-    ],
-)
-def test_michaelis_menten(x, alpha, lam, expected):
-    assert np.isclose(michaelis_menten(x, alpha, lam), expected, atol=0.01)
-
-
-@pytest.mark.parametrize(
-    "x, alpha, lam, expected",
-    [
-        (0, 1, 1, 0),
-        (1, 1, 1, 0.4621),
-    ],
-)
-def test_extense_sigmoid(x, alpha, lam, expected):
-    assert np.isclose(extense_sigmoid(x, alpha, lam), expected, atol=0.01)
-
-
-@pytest.mark.parametrize(
-    "x, alpha, lam",
-    [
-        (0, 0, 1),
-        (1, -1, 1),
-        (1, 1, 0),
-    ],
-)
-def test_extense_sigmoid_value_errors(x, alpha, lam):
-    with pytest.raises(ValueError):
-        extense_sigmoid(x, alpha, lam)
-
-
 # Test estimate_menten_parameters with valid inputs
 @pytest.mark.parametrize(
     "channel,original_dataframe,contributions,expected",
@@ -198,3 +164,158 @@ def test_compute_sigmoid_second_derivative_valid(x, alpha, lam, expected):
 def test_find_sigmoid_inflection_point_valid(alpha, lam, expected):
     result = find_sigmoid_inflection_point(alpha, lam)
     np.testing.assert_allclose(result, expected, rtol=1e-5, atol=1e-8)
+
+
+@pytest.fixture
+def mock_method():
+    def _mock_method(x):
+        if x.ndim != 2:
+            raise ValueError("x must be 2-dimensional")
+
+        return x * 2
+
+    return _mock_method
+
+
+@pytest.fixture
+def create_mock_mmm_return_data():
+    def _create_mock_mm_return_data(combined: bool) -> xr.DataArray:
+        dates = pd.date_range(start="2020-01-01", end="2020-01-31", freq="W-MON")
+        data = xr.DataArray(
+            np.ones(shape=(1, 3, len(dates))),
+            coords={
+                "chain": [1],
+                "draw": [1, 2, 3],
+                "date": dates,
+            },
+        )
+
+        if combined:
+            data = data.stack(sample=("chain", "draw"))
+
+        return data
+
+    return _create_mock_mm_return_data
+
+
+@pytest.mark.parametrize("combined", [True, False])
+def test_apply_sklearn_function_across_dim(
+    mock_method, create_mock_mmm_return_data, combined: bool
+) -> None:
+    # Data that would be returned from a MMM model
+    data = create_mock_mmm_return_data(combined=combined)
+    result = apply_sklearn_transformer_across_dim(
+        data,
+        mock_method,
+        dim_name="date",
+        combined=combined,
+    )
+
+    xr.testing.assert_allclose(result, data * 2)
+
+
+def test_apply_sklearn_function_across_dim_error(
+    mock_method,
+    create_mock_mmm_return_data,
+) -> None:
+    data = create_mock_mmm_return_data(combined=False)
+
+    with pytest.raises(ValueError, match="x must be 2-dimensional"):
+        apply_sklearn_transformer_across_dim(
+            data,
+            mock_method,
+            dim_name="date",
+            combined=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "x, alpha, lam, expected",
+    [
+        (0, 1, 1, 0),
+        (1, 1, 1, 0.4621),
+    ],
+)
+def test_sigmoid_saturation(x, alpha, lam, expected):
+    assert np.isclose(sigmoid_saturation(x, alpha, lam), expected, atol=0.01)
+
+
+@pytest.mark.parametrize(
+    "x, alpha, lam",
+    [
+        (0, 0, 1),
+        (1, -1, 1),
+        (1, 1, 0),
+    ],
+)
+def test_sigmoid_saturation_value_errors(x, alpha, lam):
+    with pytest.raises(ValueError):
+        sigmoid_saturation(x, alpha, lam)
+    (
+        "spend, adstock_max_lag, one_time, spend_leading_up, expected_result",
+        [
+            (
+                [1, 2],
+                2,
+                True,
+                None,
+                [[0, 0], [0, 0], [1, 2], [0, 0], [0, 0]],
+            ),
+            (
+                [1, 2],
+                2,
+                False,
+                None,
+                [[0, 0], [0, 0], [1, 2], [1, 2], [1, 2]],
+            ),
+            (
+                [1, 2],
+                2,
+                True,
+                [3, 4],
+                [[3, 4], [3, 4], [1, 2], [0, 0], [0, 0]],
+            ),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "spend, adstock_max_lag, one_time, spend_leading_up, expected_result",
+    [
+        (
+            [1, 2],
+            2,
+            True,
+            None,
+            [[0, 0], [0, 0], [1, 2], [0, 0], [0, 0]],
+        ),
+        (
+            [1, 2],
+            2,
+            False,
+            None,
+            [[0, 0], [0, 0], [1, 2], [1, 2], [1, 2]],
+        ),
+        (
+            [1, 2],
+            2,
+            True,
+            [3, 4],
+            [[3, 4], [3, 4], [1, 2], [0, 0], [0, 0]],
+        ),
+    ],
+)
+def test_create_new_spend_data(
+    spend, adstock_max_lag, one_time, spend_leading_up, expected_result
+) -> None:
+    spend = np.array(spend)
+    if spend_leading_up is not None:
+        spend_leading_up = np.array(spend_leading_up)
+    new_spend_data = create_new_spend_data(
+        spend, adstock_max_lag, one_time, spend_leading_up
+    )
+
+    np.testing.assert_allclose(
+        new_spend_data,
+        np.array(expected_result),
+    )
