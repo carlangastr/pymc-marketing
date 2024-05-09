@@ -1,5 +1,17 @@
+#   Copyright 2024 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
 import os
-from typing import Dict, List, Optional
 
 import arviz as az
 import numpy as np
@@ -48,7 +60,7 @@ def toy_X(generate_data) -> pd.DataFrame:
 
 
 @pytest.fixture(scope="class")
-def model_config_requiring_serialization() -> Dict:
+def model_config_requiring_serialization() -> dict:
     model_config = {
         "intercept": {"dist": "Normal", "kwargs": {"mu": 0, "sigma": 2}},
         "beta_channel": {
@@ -113,6 +125,15 @@ def mmm_fitted(
 ) -> DelayedSaturatedMMM:
     mmm.fit(X=toy_X, y=toy_y, target_accept=0.8, draws=3, chains=2, random_seed=rng)
     return mmm
+
+
+@pytest.fixture(scope="module")
+def mmm_fitted_with_posterior_predictive(
+    mmm_fitted: DelayedSaturatedMMM,
+    toy_X: pd.DataFrame,
+) -> DelayedSaturatedMMM:
+    _ = mmm_fitted.sample_posterior_predictive(toy_X, extend_idata=True, combined=True)
+    return mmm_fitted
 
 
 @pytest.fixture(scope="module")
@@ -194,14 +215,20 @@ class TestDelayedSaturatedMMM:
         argvalues=[None, 2],
         ids=["no_yearly_seasonality", "yearly_seasonality"],
     )
+    @pytest.mark.parametrize(
+        argnames="time_varying_intercept",
+        argvalues=[False, True],
+        ids=["no_time_varying_intercept", "time_varying_intercept"],
+    )
     def test_init(
         self,
         toy_X: pd.DataFrame,
         toy_y: pd.Series,
-        yearly_seasonality: Optional[int],
-        channel_columns: List[str],
-        control_columns: List[str],
+        yearly_seasonality: int | None,
+        channel_columns: list[str],
+        control_columns: list[str],
         adstock_max_lag: int,
+        time_varying_intercept: bool,
     ) -> None:
         mmm = BaseDelayedSaturatedMMM(
             date_column="date",
@@ -209,6 +236,7 @@ class TestDelayedSaturatedMMM:
             control_columns=control_columns,
             adstock_max_lag=adstock_max_lag,
             yearly_seasonality=yearly_seasonality,
+            time_varying_intercept=time_varying_intercept,
         )
         mmm.build_model(X=toy_X, y=toy_y)
         n_channel: int = len(mmm.channel_columns)
@@ -218,13 +246,10 @@ class TestDelayedSaturatedMMM:
                 samples=samples, random_seed=rng
             )
 
-        assert (
-            az.extract(
-                prior_predictive, group="prior", var_names=["intercept"], combined=True
-            )
-            .to_numpy()
-            .size
-            == samples
+        assert az.extract(
+            prior_predictive, group="prior", var_names=["intercept"], combined=True
+        ).to_numpy().shape == (
+            (samples,) if not time_varying_intercept else (toy_X.shape[0], samples)
         )
         assert az.extract(
             data=prior_predictive,
@@ -286,7 +311,6 @@ class TestDelayedSaturatedMMM:
         assert mmm.model_config is not None
         n_channel: int = len(mmm.channel_columns)
         n_control: int = len(mmm.control_columns)
-        fourier_terms: int = 2 * mmm.yearly_seasonality
         mmm.fit(
             X=toy_X,
             y=toy_y,
@@ -323,17 +347,23 @@ class TestDelayedSaturatedMMM:
         )
         assert mean_model_contributions_ts.shape == (
             toy_X.shape[0],
-            n_channel + n_control + fourier_terms + 1,
+            n_channel
+            + n_control
+            + 2,  # 2 for yearly seasonality (+1) and intercept (+)
         )
+
+        processed_df = mmm._process_decomposition_components(
+            data=mean_model_contributions_ts
+        )
+
+        assert processed_df.shape == (n_channel + n_control + 2, 3)
+
         assert mean_model_contributions_ts.columns.tolist() == [
             "channel_1",
             "channel_2",
             "control_1",
             "control_2",
-            "sin_order_1",
-            "cos_order_1",
-            "sin_order_2",
-            "cos_order_2",
+            "yearly_seasonality",
             "intercept",
         ]
 
@@ -343,7 +373,7 @@ class TestDelayedSaturatedMMM:
         ids=["no_yearly_seasonality", "yearly_seasonality=1", "yearly_seasonality=2"],
     )
     def test_get_fourier_models_data(
-        self, toy_X: pd.DataFrame, toy_y: pd.Series, yearly_seasonality: Optional[int]
+        self, toy_X: pd.DataFrame, toy_y: pd.Series, yearly_seasonality: int | None
     ) -> None:
         mmm = BaseDelayedSaturatedMMM(
             date_column="date",
@@ -357,7 +387,7 @@ class TestDelayedSaturatedMMM:
                 mmm._get_fourier_models_data(toy_X)
 
         else:
-            fourier_modes_data: Optional[pd.DataFrame] = mmm._get_fourier_models_data(
+            fourier_modes_data: pd.DataFrame | None = mmm._get_fourier_models_data(
                 toy_X
             )
             assert fourier_modes_data.shape == (
@@ -393,6 +423,71 @@ class TestDelayedSaturatedMMM:
             x=channel_contributions_forward_pass_mean / channel_contributions_mean,
             y=mmm_fitted.y.max(),
         )
+
+    @pytest.mark.parametrize(
+        argnames="original_scale",
+        argvalues=[False, True],
+        ids=["scaled", "original-scale"],
+    )
+    def test_get_errors(
+        self,
+        mmm_fitted_with_posterior_predictive: DelayedSaturatedMMM,
+        original_scale: bool,
+    ) -> None:
+        errors = mmm_fitted_with_posterior_predictive.get_errors(
+            original_scale=original_scale
+        )
+        n_chains = 2
+        n_draws = 3
+        assert isinstance(errors, xr.DataArray)
+        assert errors.name == "errors"
+        assert errors.shape == (
+            n_chains,
+            n_draws,
+            mmm_fitted_with_posterior_predictive.y.shape[0],
+        )
+
+    def test_get_errors_raises_not_fitted(self) -> None:
+        my_mmm = DelayedSaturatedMMM(
+            date_column="date",
+            channel_columns=["channel_1", "channel_2"],
+            adstock_max_lag=4,
+            control_columns=["control_1", "control_2"],
+        )
+        with pytest.raises(
+            RuntimeError,
+            match="Make sure the model has bin fitted and the posterior predictive has been sampled!",
+        ):
+            my_mmm.get_errors()
+
+    def test_posterior_predictive_raises_not_fitted(self) -> None:
+        my_mmm = DelayedSaturatedMMM(
+            date_column="date",
+            channel_columns=["channel_1", "channel_2"],
+            adstock_max_lag=4,
+            control_columns=["control_1", "control_2"],
+        )
+        with pytest.raises(
+            RuntimeError,
+            match="Make sure the model has bin fitted and the posterior predictive has been sampled!",
+        ):
+            my_mmm.plot_posterior_predictive()
+
+    def test_get_errors_bad_y_length(
+        self,
+        mmm_fitted_with_posterior_predictive: DelayedSaturatedMMM,
+    ):
+        mmm_fitted_with_posterior_predictive.y = np.array([1, 2])
+        with pytest.raises(ValueError):
+            mmm_fitted_with_posterior_predictive.get_errors()
+
+    def test_plot_posterior_predictive_bad_y_length(
+        self,
+        mmm_fitted_with_posterior_predictive: DelayedSaturatedMMM,
+    ):
+        mmm_fitted_with_posterior_predictive.y = np.array([1, 2])
+        with pytest.raises(ValueError):
+            mmm_fitted_with_posterior_predictive.plot_posterior_predictive()
 
     def test_channel_contributions_forward_pass_is_consistent(
         self, mmm_fitted: DelayedSaturatedMMM
@@ -537,10 +632,11 @@ class TestDelayedSaturatedMMM:
         DSMMM.save("test_model")
         # Apply the monkeypatch for the property
         monkeypatch.setattr(DelayedSaturatedMMM, "id", property(mock_property))
-        with pytest.raises(
-            ValueError,
-            match="The file 'test_model' does not contain an inference data of the same model or configuration as 'DelayedSaturatedMMM'",
-        ):
+
+        error_msg = """The file 'test_model' does not contain an inference data of the same model
+        or configuration as 'DelayedSaturatedMMM'"""
+
+        with pytest.raises(ValueError, match=error_msg):
             DelayedSaturatedMMM.load("test_model")
         os.remove("test_model")
 
@@ -579,7 +675,7 @@ class TestDelayedSaturatedMMM:
         ids=["default_config", "custom_config"],
     )
     def test_model_config(
-        self, model_config: Dict, toy_X: pd.DataFrame, toy_y: pd.Series
+        self, model_config: dict, toy_X: pd.DataFrame, toy_y: pd.Series
     ):
         # Create model instance with specified config
         model = DelayedSaturatedMMM(

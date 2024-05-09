@@ -1,7 +1,20 @@
+#   Copyright 2024 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
 """Media transformation functions for Marketing Mix Models."""
 
 from enum import Enum
-from typing import Any, NamedTuple, Union
+from typing import Any, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
@@ -27,7 +40,7 @@ def batched_convolution(
     x,
     w,
     axis: int = 0,
-    mode: Union[ConvMode, str] = ConvMode.After,
+    mode: ConvMode | str = ConvMode.After,
 ):
     R"""Apply a 1D convolution in a vectorized way across multiple batch dimensions.
 
@@ -65,11 +78,14 @@ def batched_convolution(
     axis : int
         The axis of ``x`` along witch to apply the convolution
     mode : ConvMode, optional
-        The convolution mode determines how the convolution is applied at the boundaries of the input signal, denoted as "x." The default mode is ConvMode.Before.
+        The convolution mode determines how the convolution is applied at the boundaries
+        of the input signal, denoted as "x." The default mode is ConvMode.Before.
 
         - ConvMode.After: Applies the convolution with the "Adstock" effect, resulting in a trailing decay effect.
-        - ConvMode.Before: Applies the convolution with the "Excitement" effect, creating a leading effect similar to the wow factor.
-        - ConvMode.Overlap: Applies the convolution with both "Pull-Forward" and "Pull-Backward" effects, where the effect overlaps with both preceding and succeeding elements.
+        - ConvMode.Before: Applies the convolution with the "Excitement" effect, creating a leading effect
+            similar to the wow factor.
+        - ConvMode.Overlap: Applies the convolution with both "Pull-Forward" and "Pull-Backward" effects,
+            where the effect overlaps with both preceding and succeeding elements.
 
     Returns
     -------
@@ -89,7 +105,7 @@ def batched_convolution(
     if l_max is None:
         try:
             l_max = w.shape[-1].eval()
-        except Exception:
+        except Exception:  # noqa: S110
             pass
     # Get the broadcast shapes of x and w but ignoring their last dimension.
     # The last dimension of x is the "time" axis, which doesn't get broadcast
@@ -136,7 +152,12 @@ def batched_convolution(
 
 
 def geometric_adstock(
-    x, alpha: float = 0.0, l_max: int = 12, normalize: bool = False, axis: int = 0
+    x,
+    alpha: float = 0.0,
+    l_max: int = 12,
+    normalize: bool = False,
+    axis: int = 0,
+    mode: ConvMode = ConvMode.After,
 ):
     R"""Geometric adstock transformation.
 
@@ -186,6 +207,17 @@ def geometric_adstock(
         Maximum duration of carryover effect.
     normalize : bool, by default False
         Whether to normalize the weights.
+    axis : int
+        The axis of ``x`` along witch to apply the convolution
+    mode : ConvMode, optional
+        The convolution mode determines how the convolution is applied at the boundaries
+        of the input signal, denoted as "x." The default mode is ConvMode.Before.
+
+        - ConvMode.After: Applies the convolution with the "Adstock" effect, resulting in a trailing decay effect.
+        - ConvMode.Before: Applies the convolution with the "Excitement" effect, creating a leading effect
+            similar to the wow factor.
+        - ConvMode.Overlap: Applies the convolution with both "Pull-Forward" and "Pull-Backward" effects,
+            where the effect overlaps with both preceding and succeeding elements.
 
     Returns
     -------
@@ -200,7 +232,7 @@ def geometric_adstock(
 
     w = pt.power(pt.as_tensor(alpha)[..., None], pt.arange(l_max, dtype=x.dtype))
     w = w / pt.sum(w, axis=-1, keepdims=True) if normalize else w
-    return batched_convolution(x, w, axis=axis, mode=ConvMode.After)
+    return batched_convolution(x, w, axis=axis, mode=mode)
 
 
 def delayed_adstock(
@@ -210,6 +242,7 @@ def delayed_adstock(
     l_max: int = 12,
     normalize: bool = False,
     axis: int = 0,
+    mode: ConvMode = ConvMode.After,
 ):
     R"""Delayed adstock transformation.
 
@@ -256,6 +289,17 @@ def delayed_adstock(
         Maximum duration of carryover effect.
     normalize : bool, by default False
         Whether to normalize the weights.
+    axis : int
+        The axis of ``x`` along witch to apply the convolution
+    mode : ConvMode, optional
+        The convolution mode determines how the convolution is applied at the boundaries
+        of the input signal, denoted as "x." The default mode is ConvMode.Before.
+
+        - ConvMode.After: Applies the convolution with the "Adstock" effect, resulting in a trailing decay effect.
+        - ConvMode.Before: Applies the convolution with the "Excitement" effect, creating a leading effect
+            similar to the wow factor.
+        - ConvMode.Overlap: Applies the convolution with both "Pull-Forward" and "Pull-Backward" effects,
+            where the effect overlaps with both preceding and succeeding elements.
 
     Returns
     -------
@@ -272,7 +316,7 @@ def delayed_adstock(
         (pt.arange(l_max, dtype=x.dtype) - pt.as_tensor(theta)[..., None]) ** 2,
     )
     w = w / pt.sum(w, axis=-1, keepdims=True) if normalize else w
-    return batched_convolution(x, w, axis=axis, mode=ConvMode.After)
+    return batched_convolution(x, w, axis=axis, mode=mode)
 
 
 def weibull_adstock(
@@ -281,11 +325,13 @@ def weibull_adstock(
     k=1,
     l_max: int = 12,
     axis: int = 0,
-    type: Union[WeibullType, str] = WeibullType.PDF,
+    mode: ConvMode = ConvMode.After,
+    type: WeibullType | str = WeibullType.PDF,
 ):
     R"""Weibull Adstocking Transformation.
 
-    This transformation is similar to geometric adstock transformation but has more degrees of freedom, adding more flexibility.
+    This transformation is similar to geometric adstock transformation but has more
+    degrees of freedom, adding more flexibility.
 
     .. plot::
         :context: close-figs
@@ -345,6 +391,17 @@ def weibull_adstock(
         Shape parameter of the Weibull distribution. Must be positive.
     l_max : int, by default 12
         Maximum duration of carryover effect.
+    axis : int
+        The axis of ``x`` along witch to apply the convolution
+    mode : ConvMode, optional
+        The convolution mode determines how the convolution is applied at the boundaries
+        of the input signal, denoted as "x." The default mode is ConvMode.Before.
+
+        - ConvMode.After: Applies the convolution with the "Adstock" effect, resulting in a trailing decay effect.
+        - ConvMode.Before: Applies the convolution with the "Excitement" effect, creating a leading effect
+            similar to the wow factor.
+        - ConvMode.Overlap: Applies the convolution with both "Pull-Forward" and "Pull-Backward" effects,
+            where the effect overlaps with both preceding and succeeding elements.
     type : WeibullType or str, by default WeibullType.PDF
         Type of Weibull adstock transformation to be applied (PDF or CDF).
 
@@ -370,10 +427,10 @@ def weibull_adstock(
         w = pt.cumprod(padded_w, axis=-1)
     else:
         raise ValueError(f"Wrong WeibullType: {type}, expected of WeibullType")
-    return batched_convolution(x, w, axis=axis)
+    return batched_convolution(x, w, axis=axis, mode=mode)
 
 
-def logistic_saturation(x, lam: Union[npt.NDArray[np.float_], float] = 0.5):
+def logistic_saturation(x, lam: npt.NDArray[np.float_] | float = 0.5):
     """Logistic saturation transformation.
 
     .. math::
@@ -416,15 +473,34 @@ def logistic_saturation(x, lam: Union[npt.NDArray[np.float_], float] = 0.5):
 
 
 class TanhSaturationParameters(NamedTuple):
-    b: pt.TensorLike
-    """Saturation.
-    """
-    c: pt.TensorLike
-    """Customer Aquisition Cost at 0.
+    """Container for tanh saturation parameters.
+
+    Parameters
+    ----------
+    b : pt.TensorLike
+        Saturation
+    c : pt.TensorLike
+        Customer Aquisition Cost at 0.
+
     """
 
+    b: pt.TensorLike
+    c: pt.TensorLike
+
     def baseline(self, x0: pt.TensorLike) -> "TanhSaturationBaselinedParameters":
-        """Change the parameterization to baselined at :math:`x_0`."""
+        """Change the parameterization to baselined at :math:`x_0`.
+
+        Parameters
+        ----------
+        x0 : pt.TensorLike
+            Baseline spend.
+
+        Returns
+        -------
+        TanhSaturationBaselinedParameters
+            Baselined parameters.
+
+        """
         y_ref = tanh_saturation(x0, self.b, self.c)
         gain_ref = y_ref / x0
         r_ref = y_ref / self.b
@@ -432,18 +508,32 @@ class TanhSaturationParameters(NamedTuple):
 
 
 class TanhSaturationBaselinedParameters(NamedTuple):
-    x0: pt.TensorLike
-    """Baseline spend.
-    """
-    gain: pt.TensorLike
-    """ROAS at :math:`x_0`.
-    """
-    r: pt.TensorLike
-    """Overspend Fraction.
+    """Representation of tanh saturation parameters in baselined form.
+
+    Parameters
+    ----------
+    x0 : pt.TensorLike
+        Baseline spend.
+    gain : pt.TensorLike
+        ROAS at :math:`x_0`.
+    r : pt.TensorLike
+        Overspend Fraction.
+
     """
 
+    x0: pt.TensorLike
+    gain: pt.TensorLike
+    r: pt.TensorLike
+
     def debaseline(self) -> TanhSaturationParameters:
-        """Change the parameterization to baselined to be classic saturation and cac."""
+        """Change the parameterization to baselined to be classic saturation and cac.
+
+        Returns
+        -------
+        TanhSaturationParameters
+            Classic saturation and cac parameters.
+
+        """
         saturation = (self.gain * self.x0) / self.r
         cac = self.r / (self.gain * pt.arctanh(self.r))
         return TanhSaturationParameters(saturation, cac)
@@ -509,7 +599,7 @@ def tanh_saturation(
     References
     ----------
     See https://www.pymc-labs.io/blog-posts/reducing-customer-acquisition-costs-how-we-helped-optimizing-hellofreshs-marketing-budget/ # noqa: E501
-    """
+    """  # noqa: E501
     return b * pt.tanh(x / (b * c))
 
 
@@ -666,14 +756,16 @@ def tanh_saturation_baselined(
 
 
 def michaelis_menten(
-    x: Union[float, np.ndarray, npt.NDArray[np.float64]],
-    alpha: Union[float, np.ndarray, npt.NDArray[np.float64]],
-    lam: Union[float, np.ndarray, npt.NDArray[np.float64]],
-) -> Union[float, Any]:
+    x: float | np.ndarray | npt.NDArray[np.float64],
+    alpha: float | np.ndarray | npt.NDArray[np.float64],
+    lam: float | np.ndarray | npt.NDArray[np.float64],
+) -> float | Any:
     r"""
     Evaluate the Michaelis-Menten function for given values of x, alpha, and lambda.
 
-    The Michaelis-Menten function models enzyme kinetics and describes how the rate of a chemical reaction increases with substrate concentration until it reaches its maximum value.
+    The Michaelis-Menten function models enzyme kinetics and describes how the rate of
+    a chemical reaction increases with substrate concentration until it reaches its
+    maximum value.
 
     .. math::
         \alpha \cdot \frac{x}{\lambda + x}

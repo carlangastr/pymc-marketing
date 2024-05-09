@@ -1,7 +1,21 @@
+#   Copyright 2024 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
 """Utility functions for the Marketing Mix Modeling module."""
 
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -45,11 +59,11 @@ def generate_fourier_modes(
 
 
 def estimate_menten_parameters(
-    channel: Union[str, Any],
-    original_dataframe: Union[pd.DataFrame, Any],
-    contributions: Union[xr.DataArray, Any],
+    channel: str | Any,
+    original_dataframe: pd.DataFrame | Any,
+    contributions: xr.DataArray | Any,
     **kwargs,
-) -> List[float]:
+) -> list[float]:
     """
     Estimate the parameters for the Michaelis-Menten function using curve fitting.
 
@@ -91,11 +105,11 @@ def estimate_menten_parameters(
 
 
 def estimate_sigmoid_parameters(
-    channel: Union[str, Any],
-    original_dataframe: Union[pd.DataFrame, Any],
-    contributions: Union[xr.DataArray, Any],
+    channel: str | Any,
+    original_dataframe: pd.DataFrame | Any,
+    contributions: xr.DataArray | Any,
     **kwargs,
-) -> List[float]:
+) -> list[float]:
     """
     Estimate the parameters for the sigmoid function using curve fitting.
 
@@ -141,10 +155,10 @@ def estimate_sigmoid_parameters(
 
 
 def compute_sigmoid_second_derivative(
-    x: Union[float, np.ndarray, npt.NDArray[np.float64]],
-    alpha: Union[float, np.ndarray, npt.NDArray[np.float64]],
-    lam: Union[float, np.ndarray, npt.NDArray[np.float64]],
-) -> Union[float, Any]:
+    x: float | np.ndarray | npt.NDArray[np.float64],
+    alpha: float | np.ndarray | npt.NDArray[np.float64],
+    lam: float | np.ndarray | npt.NDArray[np.float64],
+) -> float | Any:
     """
     Compute the second derivative of the extended sigmoid function.
 
@@ -177,9 +191,9 @@ def compute_sigmoid_second_derivative(
 
 
 def find_sigmoid_inflection_point(
-    alpha: Union[float, np.ndarray, npt.NDArray[np.float64]],
-    lam: Union[float, np.ndarray, npt.NDArray[np.float64]],
-) -> Tuple[Any, float]:
+    alpha: float | np.ndarray | npt.NDArray[np.float64],
+    lam: float | np.ndarray | npt.NDArray[np.float64],
+) -> tuple[Any, float]:
     """
     Find the inflection point of the extended sigmoid function.
 
@@ -212,12 +226,12 @@ def find_sigmoid_inflection_point(
     return x_inflection, y_inflection
 
 
-def standardize_scenarios_dict_keys(d: Dict, keywords: List[str]):
+def standardize_scenarios_dict_keys(d: dict, keywords: list[str]):
     """
     Standardize the keys in a dictionary based on a list of keywords.
 
-    This function iterates over the keys in the dictionary and the keywords. If a keyword is found in a key (case-insensitive),
-    the key is replaced with the keyword.
+    This function iterates over the keys in the dictionary and the keywords.
+    If a keyword is found in a key (case-insensitive), the key is replaced with the keyword.
 
     Parameters
     ----------
@@ -279,11 +293,31 @@ def apply_sklearn_transformer_across_dim(
     return data
 
 
+def transform_1d_array(
+    transform: Callable[[pd.Series | np.ndarray], np.ndarray], y: pd.Series | np.ndarray
+) -> np.ndarray:
+    """Transform a 1D array using a scikit-learn transformer.
+
+    Parameters
+    ----------
+    transform : scikit-learn transformer
+        The transformer to apply to the data.
+    y : np.ndarray
+        The data to transform.
+
+    Returns
+    -------
+    np.ndarray
+        The transformed data.
+    """
+    return transform(np.array(y)[:, None]).flatten()
+
+
 def sigmoid_saturation(
-    x: Union[float, np.ndarray, npt.NDArray[np.float64]],
-    alpha: Union[float, np.ndarray, npt.NDArray[np.float64]],
-    lam: Union[float, np.ndarray, npt.NDArray[np.float64]],
-) -> Union[float, Any]:
+    x: float | np.ndarray | npt.NDArray[np.float64],
+    alpha: float | np.ndarray | npt.NDArray[np.float64],
+    lam: float | np.ndarray | npt.NDArray[np.float64],
+) -> float | Any:
     """
     Parameters
     ----------
@@ -304,7 +338,7 @@ def create_new_spend_data(
     spend: np.ndarray,
     adstock_max_lag: int,
     one_time: bool,
-    spend_leading_up: Optional[np.ndarray] = None,
+    spend_leading_up: np.ndarray | None = None,
 ) -> np.ndarray:
     """Create new spend data for the channel forward pass.
 

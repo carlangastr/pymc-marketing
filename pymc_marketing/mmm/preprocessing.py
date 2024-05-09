@@ -1,6 +1,20 @@
+#   Copyright 2024 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
 """Preprocessing methods for the Marketing Mix Model."""
 
-from typing import Any, Callable, List, Tuple, Union
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -35,8 +49,8 @@ class MaxAbsScaleTarget:
 
     @preprocessing_method_y
     def max_abs_scale_target_data(
-        self, data: Union[pd.Series, np.ndarray]
-    ) -> Union[np.ndarray, pd.Series]:
+        self, data: pd.Series | np.ndarray
+    ) -> np.ndarray | pd.Series:
         if isinstance(data, pd.Series):
             data = data.to_numpy()
 
@@ -49,15 +63,12 @@ class MaxAbsScaleTarget:
 
 
 class MaxAbsScaleChannels:
-    channel_columns: Union[List[str], Tuple[str]]
+    channel_columns: list[str] | tuple[str]
 
     @preprocessing_method_X
     def max_abs_scale_channel_data(self, data: pd.DataFrame) -> pd.DataFrame:
         data_cp = data.copy()
-        channel_data: Union[
-            pd.DataFrame,
-            pd.Series[Any],
-        ] = data_cp[self.channel_columns]
+        channel_data: pd.DataFrame | pd.Series[Any] = data_cp[self.channel_columns]
         transformers = [("scaler", MaxAbsScaler())]
         pipeline: Pipeline = Pipeline(steps=transformers)
         self.channel_transformer: Pipeline = pipeline.fit(X=channel_data.to_numpy())
@@ -68,7 +79,7 @@ class MaxAbsScaleChannels:
 
 
 class StandardizeControls:
-    control_columns: List[str]  # TODO: Handle Optional[List[str]]
+    control_columns: list[str]  # TODO: Handle Optional[List[str]]
 
     @preprocessing_method_X
     def standardize_control_data(self, data: pd.DataFrame) -> pd.DataFrame:

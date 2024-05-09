@@ -1,3 +1,16 @@
+#   Copyright 2024 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
 import os
 from unittest.mock import patch
 
@@ -178,7 +191,7 @@ class TestGammaGammaModel(BaseTestGammaGammaModel):
             preds.mean(("draw", "chain")), self.z_mean, rtol=0.05
         )
 
-        # Closed formula solution for the mean and var of the population spend (eqs 3, 4 from [1])  # noqa: E501
+        # Closed formula solution for the mean and var of the population spend (eqs 3, 4 from [1])
         expected_preds_mean = p_mean * v_mean / (q_mean - 1)
         expected_preds_std = np.sqrt(
             (p_mean**2 * v_mean**2) / ((q_mean - 1) ** 2 * (q_mean - 2))
@@ -234,7 +247,7 @@ class TestGammaGammaModel(BaseTestGammaGammaModel):
             samples=1000, model=model.model, random_seed=self.rng
         )
         set_model_fit(model, fake_fit.prior)
-        # Closed formula solution for the mean and var of the population spend (eqs 3, 4 from [1])  # noqa: E501
+        # Closed formula solution for the mean and var of the population spend (eqs 3, 4 from [1])
         expected_preds_mean = p_mean * v_mean / (q_mean - 1)
         expected_preds_std = np.sqrt(
             (p_mean**2 * v_mean**2) / ((q_mean - 1) ** 2 * (q_mean - 2))
